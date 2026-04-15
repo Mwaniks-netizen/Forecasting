@@ -1,0 +1,90 @@
+---
+title: "Corticosteroid Drug sales in Australia"
+format: html
+editor: visual
+---
+
+```{r}
+#loading the necessary library
+library(fpp3)
+#| echo:false
+```
+
+```{r}
+h02 = PBS %>% 
+  filter(ATC2 =="H02") %>% 
+  summarise(Cost = sum(Cost)/1e6)
+h02
+```
+
+```{r}
+#plotting the data
+#| fig-cap:"Corcesteroid drug sales in Australia from 1991"
+h02 %>% autoplot(Cost)
+```
+
+From the above plot, we see that there is variation in the data. we perform a Box-Cox transformation to stabilize the variance as shown in the plot below.
+
+```{r}
+#stabilizing the variance
+h02 %>% autoplot(log(Cost))
+```
+
+We take a seasonal difference at lag 12 to try and make the data stationary.
+
+```{r}
+h02 %>% autoplot(log(Cost) %>% difference(12))
+#| warning:false
+```
+
+The figure above shows that the data is clearly stationary. That might be subjective and someone else might decide to do another differencing.
+
+We plot the ACF and PACF plots and the residual plots to study the data more and try guess a model from the plots.
+
+```{r}
+h02 %>% gg_tsdisplay(difference(log(Cost), 12), plot_type = "partial", lag = 36)
+```
+
+After checking the ACF and PACF plots, fit an ARIMA Model to the data.
+
+```{r}
+#Use fable to fit the best model 
+h02_fit = h02 %>% model(
+  auto = ARIMA(log(Cost))
+)
+report(h02_fit)
+```
+
+We check the residuals of the model to see whether the model is good for forecasting. The plots below all are consistent with how residuals of a normal distribution should be, so we can go ahead and forecast. We will perform a ljung box test just to verify that there's no correlation which have not been captured by the data.
+
+```{r}
+#checking the model's residuals
+h02_fit %>% gg_tsresiduals()
+```
+
+```{r}
+#We perform a ljung box test
+augment(h02_fit) %>% 
+  features(.innov, ljung_box, lag= 36, dof=3)
+```
+
+From the above test, we see that the correlations in the residuals are significant. This implies that the model is not capturing all the correlations in the data and therefore the forecasts might not be very reliable.
+
+We instruct fable to be more thorough and set stepwise and approximation to false. We also potentially want a large model. From the results, we see that the AICc is better than that of the model that we had selected previously. The stepwise equals false argument makes fable search a wider sample space.
+
+```{r}
+h02_thorough = h02 %>% 
+  model(
+    auto = ARIMA(log(Cost),
+                 stepwise = FALSE,
+                 approximation = FALSE,
+                 order_constraint = p + q + P + Q <= 9)
+  )
+report(h02_thorough)
+```
+
+We take a look at the residuals. There is no significant spike in the ACF plots as we would expect, there's no visible pattern in the residuals plot and the histogram also shows that the residuals are normally distributed. This means that we can use this model to generate forecasts as the model has met all the necessary requirements.
+
+```{r}
+gg_tsresiduals(h02_thorough)
+```
