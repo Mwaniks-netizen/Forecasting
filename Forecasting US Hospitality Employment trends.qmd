@@ -1,0 +1,142 @@
+---
+title: "Seasonal ARIMA"
+format: html
+editor: visual
+---
+
+## Forecasting US Hospitality Employment Trends using Seasonal ARIMA
+
+**US Hospitality Employment**
+
+Loading the fpp3 package which has the latest updates for forecasting.
+
+```{r}
+#loading fable library
+#|echo:false
+library(fpp3)
+
+
+```
+
+Extracting the Leisure and Hospitality data and focusing only on recent data (from 2000)
+
+```{r}
+#Extracting the data of interest
+leisure_us = us_employment %>% 
+  filter(Title == "Leisure and Hospitality", year(Month) > 2000) %>% 
+  mutate(Employed = Employed/1000) %>% 
+  select(Month, Employed)
+leisure_us
+```
+
+Visualizing the data by plotting a time plot to see the data graphically. There is a clear upward trend observed from 2000 and there is strong seasonality in the data. Therefore using seasonal ARIMA is ideal for this.
+
+```{r}
+#plotting a time plot
+leisure_us %>% autoplot(Employed) + labs(
+ "US Employment: Leisure and Hospitality",
+    y = "People (Millions)"
+)
+```
+
+We apply a seasonal difference to the data to deal with the seasonality and observe that most of the seasonality has been dealt with, but the data is still non-stationary( there is a visible pattern in the residuals plot below). We therefore have to do another difference to make the data stationary.
+
+```{r, warning=FALSE}
+# plotting ACF AND PACF plots
+leisure_us %>% gg_tsdisplay(difference(Employed, 12)
+                            , plot_type = "partial",
+                            lag = 36)+
+  labs(
+    title = "Seasonally Differenced",
+    y = " "
+  )
+```
+
+Applying the first differences to the data to the seasonally differenced data. Use the gg_tsdisplay function to view all plots at once.
+
+The data is now stationary and we can go ahead and apply a seasonal ARIMA model.
+
+```{r, warning=FALSE}
+#Applying a second difference
+leisure_us %>% gg_tsdisplay(
+  difference(Employed, 12) %>% 
+    difference(),
+    plot_type = "partial",
+  lag = 36
+)+labs(
+  title = "Double Differenced",
+  y = " "
+)
+
+```
+
+**Fitting the models**
+
+From the above plots, two models can be derived ARIMA models that would fit the data and then investigate their performance and compare with the one generated automatically. By looking at the ACF plot above, there is a significant spike at lag 12, we fit a seasonal MA(1). When we look at the lags before 12, we see a last significant spike at 2, we fit a non-seasonal MA(2) model.
+
+The same logic applies when selecting the ARIMA(2,10)(0,1,1)~12~ model. The one produced by fable is very close to our second guess.
+
+```{r}
+leisure_fit = leisure_us %>% 
+  model(
+    arima012011 = ARIMA(Employed ~ pdq(0,1,2) + PDQ(0,1,1)),
+    arima210011 = ARIMA(Employed ~ pdq(2,1,0) + PDQ(0,1,1)),
+    auto = ARIMA(Employed, stepwise = FALSE, approx = FALSE)
+  )
+leisure_fit %>% pivot_longer(
+  everything(),
+  names_to = "Model name",
+  values_to = "Orders"
+)
+```
+
+**Check how well the model fits the data**
+
+```{r}
+#checking accuracy
+glance(leisure_fit) %>% 
+  arrange(AICc) %>% 
+  select(.model,AIC, AICc, BIC)
+```
+
+**Residual plots**
+
+Check the residual plots of the auto model(The one with the lowest AICc). We see only one significant spike at lag 11 on the ACF plot. That is okay because of type one error. To be sure, perform a ljung-box test . The residual plots and the histogram are as we would expect them to be
+
+```{r}
+#plot the residual plots
+leisure_fit %>% 
+  select(auto) %>% 
+  gg_tsresiduals(lag = 36)
+```
+
+**Portmanteau tests**
+
+Ljung-box test. We see that the spike is not significant and we can proceed to generate forecasts with the model.
+
+```{r}
+#ljung-box test
+augment(leisure_fit) %>% 
+  filter(.model == "auto") %>% 
+  features(.innov, ljung_box, lag = 24, dof= 4)
+  
+```
+
+**Forecasting**
+
+We go ahead and forecast and plot the forecasts of the auto model. The model does capture the seasonality and trend well as seen in the time plot below.
+
+```{r}
+#forecasting
+leisure_forecast =  leisure_fit %>% 
+  select(auto) %>% 
+  forecast(h = 36)
+leisure_forecast
+
+#plotting the forecasts
+leisure_forecast %>%  autoplot(leisure_us)+
+  labs(
+    title = "US Employment: Leisure and Hospitality",
+    y = "People (Millions)"
+  )
+```
